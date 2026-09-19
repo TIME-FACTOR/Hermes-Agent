@@ -15,6 +15,11 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing: $1"; }
 need git
 need gh
 
+REPO="${GITHUB_REPOSITORY:-}"
+if [[ -z "$REPO" ]]; then
+  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+fi
+
 if git remote get-url upstream >/dev/null 2>&1; then
   git remote set-url upstream "$UPSTREAM_URL"
 else
@@ -41,9 +46,11 @@ log "Pushing upstream/${UPSTREAM_BRANCH} (${SHA8}) → origin/${BRANCH}"
 
 git push --force-with-lease origin "refs/remotes/upstream/${UPSTREAM_BRANCH}:refs/heads/${BRANCH}"
 
-gh label create "$LABEL" \
-  --description "Upstream sync (review before merge)" \
-  --color "1D76DB" 2>/dev/null || true
+# Label via API (needs issues:write). Ignore if exists.
+gh api -X POST "repos/${REPO}/labels" \
+  -f name="$LABEL" \
+  -f description="Upstream sync (review before merge)" \
+  -f color="1D76DB" >/dev/null 2>&1 || true
 
 BODY="$(mktemp)"
 trap 'rm -f "$BODY"' EXIT
@@ -86,15 +93,17 @@ esac
 
 TITLE="chore(upstream): sync ${UPSTREAM_REPO}@${SHA8}"
 
-if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
-  gh pr edit "$BRANCH" --title "$TITLE" --body-file "$BODY"
+if gh pr view "$BRANCH" --repo "$REPO" --json number >/dev/null 2>&1; then
+  gh pr edit "$BRANCH" --repo "$REPO" --title "$TITLE" --body-file "$BODY"
   log "Updated existing PR for ${BRANCH}"
-  gh pr view "$BRANCH" --json url --jq .url
+  gh pr view "$BRANCH" --repo "$REPO" --json url --jq .url
 else
-  if gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$TITLE" --body-file "$BODY" --label "$LABEL"; then
-    :
+  # Prefer create without label first (label can be added after), then label.
+  if PR_URL="$(gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$TITLE" --body-file "$BODY")"; then
+    gh pr edit "$BRANCH" --repo "$REPO" --add-label "$LABEL" 2>/dev/null || true
+    log "Opened PR for ${BRANCH}"
+    printf '%s\n' "$PR_URL"
   else
-    gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$TITLE" --body-file "$BODY"
+    die "Failed to open PR for ${BRANCH}. Check repo Actions setting: Allow GitHub Actions to create and approve pull requests."
   fi
-  log "Opened PR for ${BRANCH}"
 fi
