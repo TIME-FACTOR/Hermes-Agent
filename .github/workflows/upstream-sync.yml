@@ -1,0 +1,39 @@
+name: Upstream sync
+
+# Opens a PR when upstream moves ahead. Never merges to main by itself.
+# Merge the PR to take updates · Close to skip.
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Prepare upstream PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Run upstream fork sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: NousResearch/hermes-agent
+          UPSTREAM_BRANCH: main
+          UPSTREAM_URL: https://github.com/NousResearch/hermes-agent.git
+          LABEL: upstream-sync
+        run: |
+          chmod +x .github/scripts/upstream-fork-sync.sh
+          .github/scripts/upstream-fork-sync.sh
