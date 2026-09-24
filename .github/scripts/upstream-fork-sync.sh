@@ -85,7 +85,8 @@ esac
   echo
   echo "## Commits"
   echo
-  git log --format='- `%h` %s' "origin/${DEFAULT_BRANCH}..upstream/${UPSTREAM_BRANCH}" | head -n 50
+  # head closes early → SIGPIPE (141) under pipefail; don't fail the sync after a good push.
+  git log --format='- `%h` %s' "origin/${DEFAULT_BRANCH}..upstream/${UPSTREAM_BRANCH}" | head -n 50 || true
   if [[ "$AHEAD_COUNT" -gt 50 ]]; then
     echo "- …and $((AHEAD_COUNT - 50)) more"
   fi
