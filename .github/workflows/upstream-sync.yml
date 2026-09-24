@@ -2,16 +2,20 @@ name: Upstream sync
 
 # Opens a PR when upstream moves ahead. Never merges to main by itself.
 # Merge the PR to take updates · Close to skip.
+#
+# Needs secret UPSTREAM_SYNC_TOKEN: a classic PAT (or fine-grained token) with
+# Contents + Pull requests + Workflows. Default GITHUB_TOKEN cannot push
+# changes under .github/workflows/.
 
 on:
   schedule:
-    - cron: "0 15 * * 1"
+    # Every 6 hours so the fork stays current without daily babysitting.
+    - cron: "0 3,9,15,21 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 concurrency:
   group: upstream-sync
@@ -23,15 +27,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Require sync token (workflows scope)
+        env:
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "${UPSTREAM_SYNC_TOKEN}" ]; then
+            echo "::error::Missing secret UPSTREAM_SYNC_TOKEN. Create a classic PAT with repo + workflow scopes and add it as that secret."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
 
       - name: Run upstream fork sync
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           UPSTREAM_REPO: NousResearch/hermes-agent
           UPSTREAM_BRANCH: main
           UPSTREAM_URL: https://github.com/NousResearch/hermes-agent.git
