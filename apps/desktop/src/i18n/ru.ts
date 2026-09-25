@@ -480,6 +480,7 @@ export const ru = defineLocale({
       keysSettings: 'Настройки',
       mcp: 'MCP',
       archivedChats: 'Архив чатов',
+      sessions: 'Сеансы',
       about: 'О программе',
       billing: 'Оплата',
       notifications: 'Уведомления'
@@ -1082,6 +1083,9 @@ export const ru = defineLocale({
       disableF12Title: 'Отключить F12 DevTools',
       disableF12Desc:
         'Блокирует открытие Developer Tools по F12. Ctrl+Shift+I (на Mac — Cmd+Opt+I) продолжает работать.',
+      alwaysExternalLinksTitle: 'Всегда открывать ссылки во внешнем браузере',
+      alwaysExternalLinksDesc:
+        'Открывать каждую ссылку в системном браузере вместо встроенного. Пункт «Открыть во встроенном браузере» в контекстном меню продолжает работать.',
       attachmentSizeTitle: 'Макс. размер превью / загрузки изображений',
       attachmentSizeDesc:
         'Насколько большой локальный файл приложение будет загружать для превью и вложений, в МБ. По умолчанию 16. Для удалённых неграфических вложений действует отдельный лимит 256 МБ. Слишком большое значение загружает весь файл в память и может подвесить или уронить приложение.',
@@ -1089,7 +1093,7 @@ export const ru = defineLocale({
       attachmentSizeLabel: 'Макс. размер превью / загрузки изображений в мегабайтах',
       voiceShortcutHintTitle: 'Горячая клавиша записи голоса',
       voiceShortcutHintDesc:
-        'Настройте горячую клавишу записи голоса в разделе «Настройки → Горячие клавиши» («Начать / остановить диктовку»). Параметр voice.record_key действует только в CLI и TUI.'
+        'Настройте горячую клавишу записи голоса в разделе «Настройки → Горячие клавиши» («Начать / остановить голосовой диалог»). Параметр voice.record_key действует только в CLI и TUI.'
     },
     hudModifier: {
       title: 'Вызов HUD коротким нажатием',
@@ -3600,6 +3604,11 @@ export const ru = defineLocale({
     remotePickerTitle: 'Выбрать удалённую папку',
     remotePickerDescription: 'Просмотрите папки на подключённом бэкенде.',
     remotePickerSelect: 'Выбрать папку',
+    remotePickerNewFolder: 'Новая папка',
+    remotePickerFolderName: 'Имя папки',
+    remotePickerCreateFolder: 'Создать папку',
+    remotePickerInvalidFolderName: 'Введите одно имя папки без косых черт.',
+    remotePickerCreateFolderFailed: error => `Не удалось создать папку (${error}).`,
     folderTip: cwd => cwd,
     openFolder: 'Открыть папку',
     refreshTree: 'Обновить дерево',
