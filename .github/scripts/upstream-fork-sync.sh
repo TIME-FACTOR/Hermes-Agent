@@ -62,7 +62,25 @@ if [[ "$AHEAD_COUNT" -eq 0 ]]; then
 fi
 
 log "Upstream is ${AHEAD_COUNT} commit(s) ahead (${UPSTREAM_SHA:0:8}). Merging into ${DEFAULT_BRANCH}."
-git merge --no-edit "upstream/${UPSTREAM_BRANCH}"
+if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+  # Inherited workflows were deleted on this fork and edited upstream.
+  # Keep them deleted. Take upstream for any other conflict.
+  git diff --name-only --diff-filter=U | while read -r path; do
+    case "$path" in
+      .github/workflows/*|.github/scripts/upstream-fork-sync.sh)
+        git rm -f -- "$path" >/dev/null 2>&1 || true
+        ;;
+      *)
+        git checkout --theirs -- "$path" 2>/dev/null || git checkout --ours -- "$path"
+        git add -- "$path"
+        ;;
+    esac
+  done
+  git ls-files -u -- .github/workflows | awk '{print $4}' | sort -u | while read -r path; do
+    git rm -f -- "$path" >/dev/null 2>&1 || true
+  done
+  git commit --no-edit
+fi
 
 strip_inherited_ci
 git add -A
