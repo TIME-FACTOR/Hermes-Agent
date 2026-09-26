@@ -15,7 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent.image_eviction_policy import outbound_image_retire_count
-from agent.compression_marker import _COMPRESSION_MARKER_PREFIX, _COMPRESSION_MARKER_TEMPLATE
+from agent.compression_marker import (
+    ELISION_MARKER_MAX_LEN,
+    _COMPRESSION_MARKER_PREFIX,
+    _COMPRESSION_MARKER_TEMPLATE,
+    _elision_marker,
+    elide,
+    elide_middle,
+)
 from agent.auxiliary_client import (
     AuxiliaryExplicitCancellation,
     _coerce_llm_message,
@@ -525,12 +532,10 @@ _MERGED_SUMMARY_DELIMITER = "[END OF PRIOR CONTEXT — COMPACTION SUMMARY BELOW]
 # the handoff boundary (#100818). A cron run's only user turn is the job prompt
 # in the protected head, so compaction leaves it BEFORE the summary — and
 # SUMMARY_PREFIX tells the model to do nothing when no user message follows.
-# Set on a compaction carrier when the in-flight task was merged onto it (the
-# carrier ends the list, so a standalone user row would break alternation).
-# conversation_compression._ensure_compressed_has_user_turn treats it as
-# "intent present" so it does not insert a second copy of the same request.
-_INFLIGHT_REPLAY_MERGED_KEY = "_inflight_replay_merged"
-
+# When the task is merged onto a carrier (the carrier ends the list, so a
+# standalone user row would break alternation), the header right after the
+# summary end marker is what ContextCompressor._has_merged_inflight_replay
+# detects -- from content alone, so it survives SessionDB reload.
 _INFLIGHT_TASK_REPLAY_HEADER = (
     "[STILL IN PROGRESS — this is the active request, restated after the "
     "compaction boundary because it was not finished yet. Continue it; do not "
@@ -605,8 +610,7 @@ def salvage_grown_transcript(
             and len(content) > _SALVAGE_SUMMARY_MAX_CHARS
             and _looks_like_compaction_summary(msg, content)
         ):
-            msg["content"] = (content[:_SALVAGE_SUMMARY_MAX_CHARS].rstrip()
-                              + "\n…[summary truncated so compaction can shrink]\n\n" + _SUMMARY_END_MARKER)
+            msg["content"] = elide(content, _SALVAGE_SUMMARY_MAX_CHARS) + "\n\n" + _SUMMARY_END_MARKER
     _prune_stale_reasoning_replay(out)
     if estimate_messages_tokens_rough(out) >= budget:
         _salvage_reduce_todo_snapshot(out)
@@ -1003,10 +1007,9 @@ def _build_verbatim_user_section(turns: List[Dict[str, Any]]) -> str:
         if remaining <= 0:
             break
         text = content.strip()
-        if len(text) > _LEAN_USER_MESSAGE_MAX_CHARS:
-            text = text[:_LEAN_USER_MESSAGE_MAX_CHARS].rstrip() + " …[truncated]"
-        if len(text) > remaining:
-            text = text[:remaining].rstrip() + " …[truncated]"
+        if len(text) > remaining and remaining <= ELISION_MARKER_MAX_LEN:
+            break  # no room for marker + content: a marker-only quote would overshoot the budget
+        text = elide(text, min(_LEAN_USER_MESSAGE_MAX_CHARS, remaining))
         collected.append("> " + text.replace("\n", "\n> "))
         used += len(text)
     if not collected:
@@ -1266,8 +1269,7 @@ def _compact_fallback_turn(value: Any) -> str:
     text = _redact_compaction_text(_content_text_for_contains(value))
     text = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{8,}\b", "[REDACTED]", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > _FALLBACK_TURN_MAX_CHARS:
-        text = text[: _FALLBACK_TURN_MAX_CHARS - 15].rstrip() + " ...[truncated]"
+    text = elide(text, _FALLBACK_TURN_MAX_CHARS)
     return re.sub(r"\bgh[pousr]_[A-Za-z0-9_.-]+", "[REDACTED]", text)
 
 
@@ -1406,6 +1408,21 @@ def _content_text_for_contains(content: Any) -> str:
     if isinstance(content, list):
         return "\n".join(t for t in map(_part_text, content) if isinstance(t, str) and t)
     return "" if content is None else content if isinstance(content, str) else str(content)
+
+
+def _is_text_only_content(content: Any) -> bool:
+    """Whether the active request can be restated without losing a content part."""
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and all(
+        isinstance(part, str)
+        or (
+            isinstance(part, dict)
+            and part.get("type") in {"text", "input_text"}
+            and isinstance(part.get("text"), str)
+        )
+        for part in content
+    )
 
 
 def _append_text_to_content(content: Any, text: str, *, prepend: bool = False) -> Any:
@@ -1768,7 +1785,6 @@ def _sum_clarify(name, args, content, content_len, line_count):
     # Strictly below _PRUNE_MIN_CHARS so the summary survives later prune passes via the
     # min_prune_chars guard and skips the >=200-char dedup.
     max_summary_chars = _PRUNE_MIN_CHARS - 1
-    truncation_marker = "...[truncated]"
     parsed = _json_dict(content)
     response = parsed.get("user_response")
     # Batch clarify (``questions=[...]``) nests each answer inside ``responses[].user_response``
@@ -1796,8 +1812,7 @@ def _sum_clarify(name, args, content, content_len, line_count):
         # Escape lone UTF-16 surrogates so the message stays UTF-8/SQLite safe.
         serialized = json.dumps(response, ensure_ascii=False).encode("utf-8", errors="backslashreplace")
         summary = response_prefix + serialized.decode("utf-8")
-        if len(summary) > max_summary_chars:
-            summary = summary[: max_summary_chars - len(truncation_marker)].rstrip() + truncation_marker
+        summary = elide(summary, max_summary_chars)
         return summary
     return "[clarify] asked user a question"
 
@@ -3466,7 +3481,7 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
             if role == "assistant" and content:
                 content = strip_think_blocks(None, content)
             if len(content) > self._CONTENT_MAX:
-                content = content[:self._CONTENT_HEAD] + "\n...[truncated]...\n" + content[-self._CONTENT_TAIL:]
+                content = elide_middle(content, self._CONTENT_HEAD, self._CONTENT_TAIL)
             if role == "tool":
                 parts.append(f"[TOOL RESULT {msg.get('tool_call_id', '')}]: {content}")
                 continue
@@ -3551,9 +3566,7 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
         previous_summary_note = ""
         if self._previous_summary:
             previous_summary = redact_sensitive_text(self._previous_summary.strip())
-            if len(previous_summary) > _FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS:
-                previous_summary = (previous_summary[: _FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS - 45].rstrip()
-                                    + "\n...[previous summary snapshot truncated]")
+            previous_summary = elide(previous_summary, _FALLBACK_PREVIOUS_SUMMARY_MAX_CHARS)
             previous_summary_note = (
                 "\n\n## Previous Summary Snapshot\n"
                 f"{previous_summary}\n\n"
@@ -3604,8 +3617,7 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
         _pruned_names = _collect_ghosted_skill_names(turns_to_summarize)
         del _pruned_names[_MAX_PRUNED_SKILL_MARKERS:]
         summary = self._with_summary_prefix(_redact_compaction_text(body.strip()))
-        if len(summary) > _FALLBACK_SUMMARY_MAX_CHARS:
-            summary = summary[: _FALLBACK_SUMMARY_MAX_CHARS - 42].rstrip() + "\n...[fallback summary truncated]"
+        summary = elide(summary, _FALLBACK_SUMMARY_MAX_CHARS)
         # Re-inject AFTER the size cap: markers live at the end, where truncation cuts.
         summary = _reinject_pruned_skill_markers(summary, _pruned_names)
         return self._augment_summary_lean(summary, turns_to_summarize)
@@ -3680,17 +3692,11 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
         """Bound an oversized record with an explicit intra-record truncation marker."""
         if len(record) <= limit:
             return record
-        marker_template = "\n...[record truncated: {elided:,} chars elided — recover via session_search]...\n"
-        marker_reserve = len(marker_template.format(elided=len(record)))
+        marker_reserve = len(_elision_marker(omitted=len(record), total=len(record)))
         if limit <= marker_reserve:
             return record[:limit]
-        remaining = limit - marker_reserve
-        head_len = remaining // 2
-        tail_len = remaining - head_len
-        head = record[:head_len].rstrip("\n")
-        tail = record[-tail_len:].lstrip("\n")
-        elided = len(record) - len(head) - len(tail)
-        return head + marker_template.format(elided=elided) + tail
+        head_len = (limit - marker_reserve) // 2
+        return elide_middle(record, head_len, limit - marker_reserve - head_len)
 
     def _record_summary_input_coverage(self, coverage: Dict[str, int]) -> None:
         """Expose lean sampling coverage without including transcript content in telemetry."""
@@ -4431,10 +4437,11 @@ Write only the summary body. Do not include any preamble or prefix."""
             if not text:
                 continue
             text = re.sub(r"\s+", " ", text)
-            if len(text) > _ACTIVE_TASK_MAX_CHARS:
-                text = text[: _ACTIVE_TASK_MAX_CHARS - 15].rstrip() + " ...[truncated]"
+            # Elide AFTER repr: repr would escape the marker's "Hermes's" and hide a copy from the
+            # guard. Text within the cap stays whole (the split-turn path relies on that).
+            text = repr(text) if len(text) <= _ACTIVE_TASK_MAX_CHARS else elide(repr(text), _ACTIVE_TASK_MAX_CHARS)
             return (
-                f"User asked (deterministic, from compacted turns): {text!r}\n"
+                f"User asked (deterministic, from compacted turns): {text}\n"
                 "Historical only; newer protected-tail messages after this summary win."
             )
         return None
@@ -4739,6 +4746,28 @@ Write only the summary body. Do not include any preamble or prefix."""
         return adjusted
 
     @classmethod
+    def _has_merged_inflight_replay(cls, message: Any) -> bool:
+        """Recognize the active request on a handoff, including after DB reload.
+
+        Detection is content-only, anchored on the last summary end marker: the
+        explicit replay after it is authoritative; a request quoted inside the
+        historical summary is not.
+        """
+        if not cls._is_context_summary_message(message):
+            return False
+        text = _content_text_for_contains(message.get("content"))
+        # The LAST end marker is the real handoff boundary: a merged-into-tail
+        # carrier can embed an older carrier (marker + replay) in its prior
+        # context, ahead of the new summary's own marker.
+        _, boundary, remainder = text.rpartition(_SUMMARY_END_MARKER)
+        rest = remainder.lstrip()
+        return bool(
+            boundary
+            and rest.startswith(_INFLIGHT_TASK_REPLAY_HEADER)
+            and rest.removeprefix(_INFLIGHT_TASK_REPLAY_HEADER).strip()
+        )
+
+    @classmethod
     def _find_inflight_user_task(
         cls, messages: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
@@ -4781,7 +4810,7 @@ Write only the summary body. Do not include any preamble or prefix."""
             if cls._is_actionable_user_turn(msg) and _is_real_user_message(msg):
                 last_user_idx = i
                 break
-            if isinstance(msg, dict) and msg.get(_INFLIGHT_REPLAY_MERGED_KEY):
+            if cls._has_merged_inflight_replay(msg):
                 # A previous cycle merged the live request onto this summary
                 # carrier; it is the only copy left, so it is still the task.
                 last_user_idx = i
@@ -4865,7 +4894,7 @@ Write only the summary body. Do not include any preamble or prefix."""
             )
 
         last_visible_role = _last_template_visible_role(compressed)
-        if inflight.get(_INFLIGHT_REPLAY_MERGED_KEY):
+        if self._has_merged_inflight_replay(inflight):
             # Never copy a summary carrier (metadata would mark the replay
             # synthetic): restate as a plain user row.
             replay = {"role": "user", "content": task_text}
@@ -4890,14 +4919,14 @@ Write only the summary body. Do not include any preamble or prefix."""
             # tool rows are exempt), so a user-pinned summary followed by a
             # tool tail still "ends on user": a standalone user row would break
             # the Mistral-style pre-flight check (#58753). Merge onto the
-            # carrier instead and flag it — the carrier's own metadata marks it
-            # synthetic, and without the flag _ensure_compressed_has_user_turn
-            # would insert a second copy of the same request.
+            # carrier instead — its own metadata marks it synthetic, and the
+            # header after its end marker lets _has_merged_inflight_replay
+            # (used by _ensure_compressed_has_user_turn) see intent as present
+            # instead of inserting a second copy of the same request.
             carrier["content"] = _append_text_to_content(
                 carrier.get("content"),
                 "\n\n" + _INFLIGHT_TASK_REPLAY_HEADER + "\n" + task_text,
             )
-            carrier[_INFLIGHT_REPLAY_MERGED_KEY] = True
             drop_stale_api_content(carrier)
             return compressed
 
@@ -5001,6 +5030,9 @@ Write only the summary body. Do not include any preamble or prefix."""
         if (
             allow_split_turn
             and user_anchored_cut < cut_idx
+            # The handoff can restate text, but cannot replace an audio, image,
+            # or unknown structured input with its text-only projection.
+            and _is_text_only_content(messages[last_user_idx].get("content"))
             # A single oversized user message is indivisible and must stay verbatim in the tail; this
             # exception is only for aggregate turn growth after a normally sized opening request.
             and _estimate_msg_budget_tokens(messages[last_user_idx]) <= soft_ceiling
