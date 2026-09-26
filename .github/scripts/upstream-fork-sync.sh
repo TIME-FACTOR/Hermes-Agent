@@ -14,6 +14,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing: $1"; }
 need git
 
+git config user.email "actions@users.noreply.github.com"
+git config user.name "hermes-upstream-sync"
+
 if git remote get-url upstream >/dev/null 2>&1; then
   git remote set-url upstream "$UPSTREAM_URL"
 else
