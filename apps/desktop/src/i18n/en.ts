@@ -4846,6 +4846,7 @@ export const en: Translations = {
     closePane: 'Close preview pane',
     loading: 'Loading preview',
     unavailable: 'Preview unavailable',
+    missingTarget: 'That path does not exist on this computer',
     opening: 'Opening...',
     hide: 'Hide',
     openPreview: 'Open preview',
@@ -5128,6 +5129,10 @@ export const en: Translations = {
         stream_drop: {
           title: 'The reply was cut off',
           body: 'The connection dropped before the reply finished. Retry to send it again.'
+        },
+        no_reply: {
+          title: "The reply didn't finish",
+          body: 'Hermes ended this turn without a reply. Retry to send it again.'
         },
         upstream_blocked: {
           title: 'A firewall blocked the request',
