@@ -2252,6 +2252,8 @@ cli:
   approval:
     bell_context: "承認"
     label: "承認"
+    timeout_denying: "⏱ タイムアウト — コマンドを拒否します"
+    timed_out_no_response: "タイムアウト（応答なし）"
     outcome_once: "今回のみ許可"
     outcome_session: "セッション中は許可"
     outcome_always: "許可リストに追加"
@@ -3284,6 +3286,7 @@ cli:
     shallow_clone_keeping: "⚠ シャロークローン — プッシュ状態を確認できないため保持します: {path}"
     next_session_deepens: "次回の `hermes -w` セッションでクローンを深化し、マージ済みのワークツリーを自動的に削除します。"
     unpushed_keeping: "⚠ ワークツリーに未プッシュのコミットがあるため保持します: {path}"
+    uncommitted_keeping: "⚠ ワークツリーに未コミットの変更があるため保持します: {path}"
     clean_up_manually: "手動でクリーンアップするには: git worktree remove --force {path}"
     cleaned_up: "✓ ワークツリーをクリーンアップしました: {path}"
 display:

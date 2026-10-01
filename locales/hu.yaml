@@ -2269,6 +2269,8 @@ cli:
   approval:
     bell_context: "jóváhagyás"
     label: "Jóváhagyás"
+    timeout_denying: "⏱ Időtúllépés — a parancs elutasítva"
+    timed_out_no_response: "időtúllépés (nem jött válasz)"
     outcome_once: "egyszer engedélyezve"
     outcome_session: "a munkamenetre engedélyezve"
     outcome_always: "engedélyezőlistára téve"
@@ -3301,6 +3303,7 @@ cli:
     shallow_clone_keeping: "⚠ Sekély klón — a push állapota nem ellenőrizhető, megtartva: {path}"
     next_session_deepens: "A következő `hermes -w` munkamenet mélyíti a klónt, és automatikusan eltávolítja a beolvasztott worktree-ket."
     unpushed_keeping: "⚠ A worktree-ben feltöltetlen commitok vannak, megtartva: {path}"
+    uncommitted_keeping: "⚠ A worktree-ben nem commitolt változások vannak, megtartva: {path}"
     clean_up_manually: "Kézi takarításhoz: git worktree remove --force {path}"
     cleaned_up: "✓ Worktree eltakarítva: {path}"
 display:
