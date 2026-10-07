@@ -63,13 +63,17 @@ import { recordFeatureUse } from './desktop-metrics'
 // membership; these atoms are the renderer's cached view.
 
 export const $projects = atom<ProjectInfo[]>([])
+
+// The atom itself lives in ./project-tree (a leaf); re-exported here so every
+// existing import path keeps working — projects.ts remains its only writer.
+import { $projectTree } from './project-tree'
+export { $projectTree }
 export const $activeProjectId = atom<null | string>(null)
 
 // The authoritative project -> repo -> lane tree (overview), served by
 // `projects.tree`. Lanes carry counts + structure; per-project session rows are
 // fetched lazily on drill-in via `fetchProjectSessions`. This is the single
 // source of project membership — the desktop no longer derives it.
-export const $projectTree = atom<SidebarProjectTree[]>([])
 export const $projectTreeLoading = atom(false)
 // Backend-resolved session -> project owner, the ONE authority the row
 // classifiers (filter, bucket, color, label) and the lane overlay share, so a
@@ -1623,9 +1627,10 @@ export async function copyPath(path: null | string): Promise<void> {
   }
 }
 
-// Pick a project folder via the remote-aware picker: a remote gateway browses
-// the backend filesystem (seeded at its default cwd) where sessions run; local
-// mode opens the native dialog. Returns the absolute path, or null if cancelled.
+// Pick one project folder via the remote-aware picker: a remote gateway
+// browses the backend filesystem (seeded at its default cwd) where sessions
+// run; local mode opens the native dialog. Returns the absolute path, or null
+// if cancelled.
 export async function pickProjectFolder(): Promise<null | string> {
   const [dir] = await selectDesktopPaths({
     defaultPath: (await desktopDefaultCwd())?.cwd,
@@ -1634,6 +1639,31 @@ export async function pickProjectFolder(): Promise<null | string> {
   })
 
   return dir || null
+}
+
+// Multi-select variant for the project dialog: one pick can carry several
+// folders (#68741), matching what the native dialog's multiSelections allows.
+export async function pickProjectFolders(): Promise<string[]> {
+  return selectDesktopPaths({
+    defaultPath: (await desktopDefaultCwd())?.cwd,
+    directories: true,
+    multiple: true
+  })
+}
+
+// Add every picked folder to an existing project in one action. Folders the
+// project already has — or repeats within the pick itself — are skipped, so
+// a multi-select never writes duplicate rows (#68741).
+export async function addProjectFolders(id: string, paths: string[]): Promise<void> {
+  const existing = new Set($projects.get().find(proj => proj.id === id)?.folders?.map(folder => folder.path) ?? [])
+
+  for (const path of new Set(paths.map(path => path.trim()).filter(Boolean))) {
+    if (existing.has(path)) {
+      continue
+    }
+
+    await addProjectFolder(id, path)
+  }
 }
 
 // ⌘O / palette "Open folder…": open a folder AS a project, upserting. A folder

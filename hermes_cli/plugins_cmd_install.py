@@ -420,9 +420,13 @@ def _install_plugin_core(
         _refuse_unavailable_portable_plugin(plugin_name, tmp_target)
 
         if target.exists() and not force:
+            from pm.environments import cli_command_name
+            from pm.paths import repo_root
+
             raise _pc().PluginOperationError(
                 f"Plugin '{plugin_name}' already exists. Use force reinstall "
-                f"or run `hermes plugins update {plugin_name}`.", failure_class="already_installed")
+                f"or run `{cli_command_name(repo_root())} plugins update {plugin_name}`.",
+                failure_class="already_installed")
         if target.exists() and requested_revision is None and isinstance(prior, dict) and prior.get("pinned") is True:
             raise _pc().PluginOperationError(
                 f"Plugin '{plugin_name}' is pinned. Reinstall it with an explicit "
@@ -526,6 +530,7 @@ def cmd_install(
     allow_removed: bool = False,
     no_deps: bool = False,
     yes_deps: bool = False,
+    allow_live_gateway: bool = False,
 ) -> None:
     """Install a plugin from the curated catalog (bare name), a Git URL, or owner/repo shorthand.
 
@@ -555,6 +560,10 @@ def cmd_install(
             "This plugin may have been removed for security reasons.[/red]")
 
     try:
+        if force:
+            # `install --force` over an existing install replaces its code in place — the same
+            # destructive mutation of a loaded checkout that `update` is (#70473).
+            _pc()._refuse_live_gateway_mutation("reinstall", allow_live_gateway=allow_live_gateway)
         git_url, _subdir = _pc()._resolve_git_url(identifier)
         if not allow_removed:
             catalog.raise_if_removed(identifier, git_url, *((entry.name,) if entry else ()))
